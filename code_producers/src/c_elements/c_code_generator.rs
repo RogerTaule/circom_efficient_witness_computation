@@ -40,7 +40,7 @@ pub fn declare_expaux(size: usize) -> CInstruction {
     format!("{} {}[{}]", T_FR_ELEMENT, L_INTERMEDIATE_COMPUTATIONS_STACK, size)
 }
 pub fn declare_64bit_expaux(size: usize) -> CInstruction {
-    format!("{} {}[{}]", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, size)
+    format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, T_U64, size)
 }
 pub fn expaux(at: CInstruction) -> CInstruction {
     format!("{}[{}]", L_INTERMEDIATE_COMPUTATIONS_STACK, at)
@@ -62,7 +62,7 @@ pub fn declare_lvar(size: usize) -> CInstruction {
     format!("{} {}[{}]", T_FR_ELEMENT, L_VAR_STORAGE, size)
 }
 pub fn declare_64bit_lvar(size: usize) -> CInstruction {
-    format!("{} {}[{}]", T_U64, L_VAR_STORAGE, size)
+    format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_VAR_STORAGE, T_U64, size)
 }
 pub fn declare_lvar_pointer() -> CInstruction {
     format!("{}* {}", T_FR_ELEMENT, L_VAR_STORAGE)
