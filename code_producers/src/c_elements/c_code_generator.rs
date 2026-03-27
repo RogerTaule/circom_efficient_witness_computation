@@ -40,7 +40,7 @@ pub fn declare_expaux(size: usize) -> CInstruction {
     format!("{} {}[{}]", T_FR_ELEMENT, L_INTERMEDIATE_COMPUTATIONS_STACK, size)
 }
 pub fn declare_64bit_expaux(size: usize) -> CInstruction {
-    format!("{} {}[{}]", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, size)
+    format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, T_U64, size)
 }
 pub fn expaux(at: CInstruction) -> CInstruction {
     format!("{}[{}]", L_INTERMEDIATE_COMPUTATIONS_STACK, at)
@@ -62,7 +62,7 @@ pub fn declare_lvar(size: usize) -> CInstruction {
     format!("{} {}[{}]", T_FR_ELEMENT, L_VAR_STORAGE, size)
 }
 pub fn declare_64bit_lvar(size: usize) -> CInstruction {
-    format!("{} {}[{}]", T_U64, L_VAR_STORAGE, size)
+    format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_VAR_STORAGE, T_U64, size)
 }
 pub fn declare_lvar_pointer() -> CInstruction {
     format!("{}* {}", T_FR_ELEMENT, L_VAR_STORAGE)
@@ -924,18 +924,30 @@ pub fn generate_function_release_memory_component() -> Vec<String>{
     let mut instructions = vec![];
     instructions.push("void release_memory_component(Circom_CalcWit* ctx, uint pos) {{\n".to_string());
     instructions.push("if (pos != 0){{\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].subcomponents)".to_string());
+    instructions.push("if(ctx->componentMemory[pos].subcomponents) {".to_string());
     instructions.push("delete []ctx->componentMemory[pos].subcomponents;\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].subcomponentsParallel)".to_string());
+    instructions.push("ctx->componentMemory[pos].subcomponents = NULL;\n".to_string());
+    instructions.push("}\n".to_string());
+    instructions.push("if(ctx->componentMemory[pos].subcomponentsParallel) {".to_string());
     instructions.push("delete []ctx->componentMemory[pos].subcomponentsParallel;\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].outputIsSet)".to_string());
+    instructions.push("ctx->componentMemory[pos].subcomponentsParallel = NULL;\n".to_string());
+    instructions.push("}\n".to_string());
+    instructions.push("if(ctx->componentMemory[pos].outputIsSet) {".to_string());
     instructions.push("delete []ctx->componentMemory[pos].outputIsSet;\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].mutexes)".to_string());
+    instructions.push("ctx->componentMemory[pos].outputIsSet = NULL;\n".to_string());
+    instructions.push("}\n".to_string());
+    instructions.push("if(ctx->componentMemory[pos].mutexes) {".to_string());
     instructions.push("delete []ctx->componentMemory[pos].mutexes;\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].cvs)".to_string());
+    instructions.push("ctx->componentMemory[pos].mutexes = NULL;\n".to_string());
+    instructions.push("}\n".to_string());
+    instructions.push("if(ctx->componentMemory[pos].cvs) {".to_string());
     instructions.push("delete []ctx->componentMemory[pos].cvs;\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].sbct)".to_string());
+    instructions.push("ctx->componentMemory[pos].cvs = NULL;\n".to_string());
+    instructions.push("}\n".to_string());
+    instructions.push("if(ctx->componentMemory[pos].sbct) {".to_string());
     instructions.push("delete []ctx->componentMemory[pos].sbct;\n".to_string());
+    instructions.push("ctx->componentMemory[pos].sbct = NULL;\n".to_string());
+    instructions.push("}\n".to_string());
     instructions.push("}}\n\n".to_string());
     instructions.push("}}\n\n".to_string());
     instructions
