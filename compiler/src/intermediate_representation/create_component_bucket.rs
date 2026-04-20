@@ -284,7 +284,7 @@ impl WriteC for CreateCmpBucket {
             );
         }
         else {
-            instructions.push(format!("std::string new_cmp_name = \"{}\";", self.name_subcomponent.to_string()));
+            instructions.push(format!("const char* new_cmp_name = \"{}\";", self.name_subcomponent.to_string()));
         }
 
         let create_args = vec![

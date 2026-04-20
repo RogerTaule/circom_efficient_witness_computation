@@ -457,7 +457,37 @@ impl WriteC for ComputeBucket {
                 _ => {
                     // build assign
                     let operator = get_fr_op(&self.op);
-                    result = build_call(operator, operands);
+                    // Constant folding for 0 and 1 in Goldilocks field
+                    result = match self.op {
+                        OperatorType::Mul => {
+                            if operands[0] == "0ull" || operands[1] == "0ull" {
+                                "0ull".to_string()
+                            } else if operands[0] == "1ull" {
+                                operands[1].clone()
+                            } else if operands[1] == "1ull" {
+                                operands[0].clone()
+                            } else {
+                                build_call(operator, operands)
+                            }
+                        }
+                        OperatorType::Add => {
+                            if operands[0] == "0ull" {
+                                operands[1].clone()
+                            } else if operands[1] == "0ull" {
+                                operands[0].clone()
+                            } else {
+                                build_call(operator, operands)
+                            }
+                        }
+                        OperatorType::Sub => {
+                            if operands[1] == "0ull" {
+                                operands[0].clone()
+                            } else {
+                                build_call(operator, operands)
+                            }
+                        }
+                        _ => build_call(operator, operands),
+                    };
                 }
             }
         }

@@ -135,7 +135,7 @@ pub fn component_offset() -> CInstruction {
 
 pub const COMPONENT_NAME: &str = "componentName";
 pub fn declare_component_name() -> CInstruction {
-    format!("std::string {}", COMPONENT_NAME)
+    format!("const std::string& {}", COMPONENT_NAME)
 }
 pub fn component_name() -> CInstruction {
     COMPONENT_NAME.to_string()
@@ -184,7 +184,7 @@ pub fn my_signal_start() -> CInstruction {
 pub const MY_TEMPLATE_NAME: &str = "myTemplateName";
 pub fn declare_my_template_name() -> CInstruction {
     format!(
-        "std::string {} = {}->componentMemory[{}].templateName",
+        "const std::string& {} = {}->componentMemory[{}].templateName",
         MY_TEMPLATE_NAME, CIRCOM_CALC_WIT, CTX_INDEX
     )
 }
@@ -202,7 +202,7 @@ pub fn my_template_name() -> CInstruction {
 pub const MY_COMPONENT_NAME: &str = "myComponentName";
 pub fn declare_my_component_name() -> CInstruction {
     format!(
-        "std::string {} = {}->componentMemory[{}].componentName",
+        "const std::string& {} = {}->componentMemory[{}].componentName",
         MY_COMPONENT_NAME, CIRCOM_CALC_WIT, CTX_INDEX
     )
 }
@@ -920,49 +920,6 @@ pub fn generate_message_list_def(_producer: &CProducer, message_list: &MessageLi
     instructions
 }
 
-pub fn generate_function_release_memory_component() -> Vec<String>{
-    let mut instructions = vec![];
-    instructions.push("void release_memory_component(Circom_CalcWit* ctx, uint pos) {{\n".to_string());
-    instructions.push("if (pos != 0){{\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].subcomponents) {".to_string());
-    instructions.push("delete []ctx->componentMemory[pos].subcomponents;\n".to_string());
-    instructions.push("ctx->componentMemory[pos].subcomponents = NULL;\n".to_string());
-    instructions.push("}\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].subcomponentsParallel) {".to_string());
-    instructions.push("delete []ctx->componentMemory[pos].subcomponentsParallel;\n".to_string());
-    instructions.push("ctx->componentMemory[pos].subcomponentsParallel = NULL;\n".to_string());
-    instructions.push("}\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].outputIsSet) {".to_string());
-    instructions.push("delete []ctx->componentMemory[pos].outputIsSet;\n".to_string());
-    instructions.push("ctx->componentMemory[pos].outputIsSet = NULL;\n".to_string());
-    instructions.push("}\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].mutexes) {".to_string());
-    instructions.push("delete []ctx->componentMemory[pos].mutexes;\n".to_string());
-    instructions.push("ctx->componentMemory[pos].mutexes = NULL;\n".to_string());
-    instructions.push("}\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].cvs) {".to_string());
-    instructions.push("delete []ctx->componentMemory[pos].cvs;\n".to_string());
-    instructions.push("ctx->componentMemory[pos].cvs = NULL;\n".to_string());
-    instructions.push("}\n".to_string());
-    instructions.push("if(ctx->componentMemory[pos].sbct) {".to_string());
-    instructions.push("delete []ctx->componentMemory[pos].sbct;\n".to_string());
-    instructions.push("ctx->componentMemory[pos].sbct = NULL;\n".to_string());
-    instructions.push("}\n".to_string());
-    instructions.push("}}\n\n".to_string());
-    instructions.push("}}\n\n".to_string());
-    instructions
-}
-
-pub fn generate_function_release_memory_circuit() -> Vec<String>{ 
-    // deleting each one of the components
-    let mut instructions = vec![];
-    instructions.push("void release_memory(Circom_CalcWit* ctx) {{\n".to_string());
-    instructions.push("for (int i = 0; i < get_number_of_components(); i++) {{\n".to_string());
-    instructions.push("release_memory_component(ctx, i);\n".to_string());
-    instructions.push("}}\n".to_string());
-    instructions.push("}}\n".to_string());
-    instructions
-  }
 
 pub fn generate_main_cpp_file(c_folder: &PathBuf, producer: &CProducer) -> std::io::Result<()> {
     use std::io::BufWriter;

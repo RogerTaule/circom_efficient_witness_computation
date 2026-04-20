@@ -70,19 +70,21 @@ impl WriteWasm for AssertBucket {
 impl WriteC for AssertBucket {
     fn produce_c(&self, producer: &CProducer, parallel: Option<bool>) -> (Vec<String>, String) {
         use c_code_generator::*;
-        if !self.is_constraint_equality || producer.sanity_check_style >= 1{
+        if !self.is_constraint_equality || producer.sanity_check_style >= 1 {
             let (mut prologue, value) = self.evaluate.produce_c(producer, parallel);
+            // Skip assert(true): Fr_isTrue(1ull) is always true in Goldilocks
+            if prologue.is_empty() && value == "1ull" {
+                return (vec![], "".to_string());
+            }
             let is_true = build_call("Fr_isTrue".to_string(), vec![value]);
-            let if_condition = format!("if (!{}) {{\n {}; \n throw std::runtime_error(\"Witness generation failed \"); }}", is_true, build_failed_assert_message(self.line));    
-            // let assertion = format!("{};", build_call("assert".to_string(), vec![is_true]));
+            let if_condition = format!("if (!{}) {{\n {}; \n throw std::runtime_error(\"Witness generation failed \"); }}", is_true, build_failed_assert_message(self.line));
             let mut assert_c = vec![];
             assert_c.push(format!("{{"));
             assert_c.append(&mut prologue);
             assert_c.push(if_condition);
-            // assert_c.push(assertion);
             assert_c.push(format!("}}"));
             (assert_c, "".to_string())
-        } else{
+        } else {
             (Vec::new(), "".to_string())
         }
     }

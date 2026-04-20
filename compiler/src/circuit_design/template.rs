@@ -220,56 +220,55 @@ impl TemplateCodeInfo {
 	        component_offset(),
             COMPONENT_FATHER
         ));
-        if self.number_of_components > 0{
+        if self.number_of_components > 0 {
+            // Alloc once on first run; on subsequent runs just zero the existing array.
             create_body.push(format!(
-                "{}->componentMemory[{}].subcomponents = new uint[{}]{{0}};",
-                CIRCOM_CALC_WIT,
-                component_offset(),
-                &self.number_of_components.to_string()
-            ));
-        } else{
-            create_body.push(format!(
-                "{}->componentMemory[{}].subcomponents = new uint[{}];",
-                CIRCOM_CALC_WIT,
-                component_offset(),
-                &self.number_of_components.to_string()
+                "if (!{}->componentMemory[{}].subcomponents) \
+                    {}->componentMemory[{}].subcomponents = new uint[{}]; \
+                 memset({}->componentMemory[{}].subcomponents, 0, {}*sizeof(uint));",
+                CIRCOM_CALC_WIT, component_offset(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_components.to_string(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_components.to_string()
             ));
         }
-	if self.has_parallel_sub_cmp {
+        if self.has_parallel_sub_cmp {
+            // sbct: alloc once; threads are joined before release so slots are reusable.
             create_body.push(format!(
-		"{}->componentMemory[{}].sbct = new std::thread[{}];",
-		CIRCOM_CALC_WIT,
-		component_offset(),
-		&self.number_of_components.to_string()
+                "if (!{}->componentMemory[{}].sbct) \
+                    {}->componentMemory[{}].sbct = new std::thread[{}];",
+                CIRCOM_CALC_WIT, component_offset(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_components.to_string()
             ));
-
-        create_body.push(format!(
-            "{}->componentMemory[{}].subcomponentsParallel = new bool[{}];",
-            CIRCOM_CALC_WIT,
-            component_offset(),
-            &self.number_of_components.to_string()
-        ));
-	}
-	if parallel {
+            // subcomponentsParallel: alloc once, zero each run.
             create_body.push(format!(
-		"{}->componentMemory[{}].outputIsSet = new bool[{}]();",
-		CIRCOM_CALC_WIT,
-		component_offset(),
-		&self.number_of_outputs.to_string()
+                "if (!{}->componentMemory[{}].subcomponentsParallel) \
+                    {}->componentMemory[{}].subcomponentsParallel = new bool[{}]; \
+                 memset({}->componentMemory[{}].subcomponentsParallel, 0, {});",
+                CIRCOM_CALC_WIT, component_offset(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_components.to_string(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_components.to_string()
             ));
+        }
+        if parallel {
+            // outputIsSet: alloc once, zero each run.
             create_body.push(format!(
-		"{}->componentMemory[{}].mutexes = new std::mutex[{}];",
-		CIRCOM_CALC_WIT,
-		component_offset(),
-		&self.number_of_outputs.to_string()
+                "if (!{}->componentMemory[{}].outputIsSet) \
+                    {}->componentMemory[{}].outputIsSet = new bool[{}]; \
+                 memset({}->componentMemory[{}].outputIsSet, 0, {});",
+                CIRCOM_CALC_WIT, component_offset(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_outputs.to_string(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_outputs.to_string()
             ));
+            // mutexes/cvs: alloc once; after a run all mutexes are unlocked and cvs idle.
             create_body.push(format!(
-		"{}->componentMemory[{}].cvs = new std::condition_variable[{}];",
-		CIRCOM_CALC_WIT,
-		component_offset(),
-		&self.number_of_outputs.to_string()
+                "if (!{}->componentMemory[{}].mutexes) {{  \
+                    {}->componentMemory[{}].mutexes = new std::mutex[{}]; \
+                    {}->componentMemory[{}].cvs = new std::condition_variable[{}]; }}",
+                CIRCOM_CALC_WIT, component_offset(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_outputs.to_string(),
+                CIRCOM_CALC_WIT, component_offset(), &self.number_of_outputs.to_string()
             ));
-	}
+        }
 	// if has no inputs should be runned
 	if self.number_of_inputs == 0 {
 	    let cmp_call_name = format!("{}_run", self.header);
@@ -444,31 +443,23 @@ impl TemplateCodeInfo {
 	    run_body.push(format!("ctx->ntcvs.notify_one();"));
 	}
 
-        // to check that all components inputs have been assigned and release the memory of its subcomponents
-        run_body.push(format!("for (uint i = 0; i < {}; i++){{", &self.number_of_components.to_string()));
-        run_body.push(format!(
-            "uint index_subc = {}->componentMemory[{}].subcomponents[i];",
-            CIRCOM_CALC_WIT,
-            ctx_index(),
-        ));
-        run_body.push(format!("if (index_subc != 0){{"));
-        // check that all inputs have been set if sanity_check >= 2
-        if producer.sanity_check_style >= 2{
+        // check that all subcomponent inputs have been assigned
+        if producer.sanity_check_style >= 2 && self.number_of_components > 0 {
+            run_body.push(format!("for (uint i = 0; i < {}; i++){{", &self.number_of_components.to_string()));
+            run_body.push(format!(
+                "uint index_subc = {}->componentMemory[{}].subcomponents[i];",
+                CIRCOM_CALC_WIT,
+                ctx_index(),
+            ));
+            run_body.push(format!("if (index_subc != 0){{"));
             let num_inputs = format!(
                 "{}->componentMemory[index_subc].inputCounter",
                 CIRCOM_CALC_WIT
             );
             run_body.push(format!("assert(!({}));", num_inputs));
+            run_body.push(format!("}}"));
+            run_body.push(format!("}}"));
         }
-        // release the memory
-        run_body.push(format!("{};",
-            build_call(
-                "release_memory_component".to_string(), 
-                vec![CIRCOM_CALC_WIT.to_string(), "index_subc".to_string()]
-            ))
-        );
-        run_body.push(format!("}}"));
-        run_body.push(format!("}}"));
         let run_fun = build_callable(run_header, run_params, run_body);
         vec![create_fun, run_fun]
     }
