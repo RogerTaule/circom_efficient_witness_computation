@@ -190,7 +190,7 @@ pub fn declare_my_template_name() -> CInstruction {
 }
 pub fn declare_my_template_name_function(name: &String) -> CInstruction {
     format!(
-        "std::string {} = \"{}\"",
+        "const char* {} = \"{}\"",
         MY_TEMPLATE_NAME, name.to_string()
     )
 }
