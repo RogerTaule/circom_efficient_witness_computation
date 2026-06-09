@@ -506,6 +506,22 @@ pub fn fast_encoded_constraint_substitution(c: &mut C, enc: &HashMap<usize, A>, 
     applied_substitution
 }
 
+// Signal->signal specialization of `fast_encoded_constraint_substitution`: the encoded
+// map is just `from -> to_signal`, so we avoid storing/cloning ArithmeticExpression values.
+// Behaviourally identical to the encoded version when every entry is `A::Signal`.
+pub fn fast_signal_constraint_substitution(c: &mut C, enc: &HashMap<usize, usize>, field: &BigInt) -> bool {
+    let signals = C::take_cloned_signals(c);
+    let mut applied_substitution = false;
+    for signal in signals {
+        if let Some(to) = HashMap::get(enc, &signal) {
+            let sub = S::new(signal, A::Signal { symbol: *to }).unwrap();
+            C::apply_substitution(c, &sub, field);
+            applied_substitution = true;
+        }
+    }
+    applied_substitution
+}
+
 pub fn fast_encoded_substitution_substitution(s: &mut S, enc: &HashMap<usize, A>, field: &BigInt) {
     let signals = S::take_cloned_signals(s);
     for signal in signals {

@@ -98,11 +98,97 @@ fn build_clusters(linear: LinkedList<C>, no_vars: usize) -> Vec<Cluster> {
     clusters
 }
 
+// Equality-only cluster: holds signal pairs (s_lo == s_hi) instead of full Constraints.
+// Uses a LinkedList so merges are O(1) splices (union-find merges clusters repeatedly;
+// a Vec would copy elements on every merge, giving quadratic behavior on huge clusters).
+#[derive(Default, Clone)]
+struct EqCluster {
+    pairs: LinkedList<crate::EqPair>,
+    num_signals: usize,
+}
+impl EqCluster {
+    pub fn new(pair: crate::EqPair) -> EqCluster {
+        let mut pairs = LinkedList::new();
+        pairs.push_back(pair);
+        EqCluster { pairs, num_signals: 2 }
+    }
+    // Signals of a pair, ignoring the retained coefficient (used by the union-find and
+    // the multi-signal cluster path, which canonicalizes coefficients anyway).
+    fn pair_signals(pair: &crate::EqPair) -> (usize, usize) {
+        (pair.0, pair.1)
+    }
+    pub fn merge(mut c0: EqCluster, mut c1: EqCluster) -> EqCluster {
+        let mut result = EqCluster::default();
+        result.pairs.append(&mut c0.pairs);
+        result.pairs.append(&mut c1.pairs);
+        result.num_signals = c0.num_signals + c1.num_signals - 1;
+        result
+    }
+    pub fn size(&self) -> usize {
+        self.pairs.len()
+    }
+}
+
+// Union-find clustering over equality pairs. Mirrors `build_clusters` exactly but
+// operates on signal pairs (no Constraint allocation).
+fn build_eq_clusters(equalities: Vec<crate::EqPair>, no_vars: usize) -> Vec<EqCluster> {
+    type ClusterArena = Vec<Option<EqCluster>>;
+    type ClusterPath = Vec<usize>;
+    fn shrink_jumps_and_find(c_to_c: &mut ClusterPath, org: usize) -> usize {
+        let mut current = org;
+        let mut jumps = Vec::new();
+        while current != c_to_c[current] {
+            Vec::push(&mut jumps, current);
+            current = c_to_c[current];
+        }
+        while let Some(redirect) = Vec::pop(&mut jumps) {
+            c_to_c[redirect] = current;
+        }
+        current
+    }
+    fn arena_merge(arena: &mut ClusterArena, c_to_c: &mut ClusterPath, src: usize, dest: usize) {
+        let current_dest = shrink_jumps_and_find(c_to_c, dest);
+        let current_src = shrink_jumps_and_find(c_to_c, src);
+        let c0 = std::mem::replace(&mut arena[current_dest], None).unwrap_or_default();
+        let c1 = std::mem::replace(&mut arena[current_src], None).unwrap_or_default();
+        let merged = EqCluster::merge(c0, c1);
+        arena[current_dest] = Some(merged);
+        c_to_c[current_src] = current_dest;
+    }
+
+    let no_eq = equalities.len();
+    let mut arena = ClusterArena::with_capacity(no_eq);
+    let mut cluster_to_current = ClusterPath::with_capacity(no_eq);
+    let mut signal_to_cluster = vec![no_eq; no_vars];
+    for pair in equalities {
+        let (s0, s1) = (pair.0, pair.1); // copy signals before `pair` (carrying a BigInt) is moved
+        let dest = ClusterArena::len(&arena);
+        ClusterArena::push(&mut arena, Some(EqCluster::new(pair)));
+        Vec::push(&mut cluster_to_current, dest);
+        for &signal in &[s0, s1] {
+            let prev = signal_to_cluster[signal];
+            signal_to_cluster[signal] = dest;
+            if prev < no_eq {
+                arena_merge(&mut arena, &mut cluster_to_current, prev, dest);
+            }
+        }
+    }
+    let mut clusters = Vec::new();
+    for cluster in arena {
+        if let Some(cluster) = cluster {
+            if EqCluster::size(&cluster) != 0 {
+                Vec::push(&mut clusters, cluster);
+            }
+        }
+    }
+    clusters
+}
+
 fn rebuild_witness(
-    max_signal: usize, 
-    deleted: &mut HashSet<usize>, 
-    forbidden: &HashSet<usize>, 
-    non_linear_map: SignalToConstraints, 
+    max_signal: usize,
+    deleted: &mut HashSet<usize>,
+    forbidden: &HashSet<usize>,
+    non_linear_map: SignalToConstraints,
     remove_unused: bool,
 ) -> SignalMap {
     let mut map = SignalMap::with_capacity(max_signal);
@@ -123,42 +209,59 @@ fn rebuild_witness(
     map
 }
 
+// Rebuild the original equality constraint `c_a * s_a + c_b * s_b = 0` for a signal pair,
+// where `c_a` is `s_a`'s original coefficient and `c_b == -c_a` over the field (the invariant
+// `signal_equals_signal` checks). This reproduces the circuit's exact coefficients — not a
+// canonical +1/-1 form — so the emitted .r1cs is byte-identical to the unoptimized compiler.
+// Used only on the rare path where both signals are forbidden and the equality is kept.
+//
+// `transform_expression_to_constraint_form` multiplies the constraint's `c` map by -1, so we
+// feed it `(-c_a) * s_a + c_a * s_b`; after the internal negation `c` becomes
+// `{s_a: c_a, s_b: -c_a}`, matching the original constraint exactly. Field-agnostic.
+fn equality_constraint(s_a: usize, s_b: usize, c_a: &BigInt, field: &BigInt) -> C {
+    let neg_c_a = circom_algebra::modular_arithmetic::mul(&BigInt::from(-1), c_a, field);
+    let term_a = A::mul(&A::Number { value: neg_c_a }, &A::Signal { symbol: s_a }, field);
+    let term_b = A::mul(&A::Number { value: c_a.clone() }, &A::Signal { symbol: s_b }, field);
+    let expr = A::add(&term_a, &term_b, field);
+    A::transform_expression_to_constraint_form(expr, field).unwrap()
+}
+
+
+type SubPair = (usize, usize);
+
 fn eq_cluster_simplification(
-    mut cluster: Cluster,
+    cluster: EqCluster,
     forbidden: &HashSet<usize>,
     field: &BigInt,
-) -> (LinkedList<S>, LinkedList<C>) {
-    if Cluster::size(&cluster) == 1 {
-        let mut substitutions = LinkedList::new();
+) -> (Vec<SubPair>, LinkedList<C>) {
+    if EqCluster::size(&cluster) == 1 {
+        let mut substitutions = Vec::new();
         let mut constraints = LinkedList::new();
-        let constraint = LinkedList::pop_back(&mut cluster.constraints).unwrap();
-        let signals: Vec<_> = C::take_cloned_signals_ordered(&constraint).iter().cloned().collect();
-        let s_0 = signals[0];
-        let s_1 = signals[1];
+        let pair = cluster.pairs.front().unwrap(); // stored as (lo, hi, c_lo): s_0 < s_1
+        let (s_0, s_1) = EqCluster::pair_signals(pair);
         if HashSet::contains(forbidden, &s_0) && HashSet::contains(forbidden, &s_1) {
-            LinkedList::push_back(&mut constraints, constraint);
+            // Both forbidden: the equality is kept as a constraint. Reproduce the original
+            // coefficients (pair.2 = c_{s_0}) so the emitted .r1cs is byte-identical.
+            LinkedList::push_back(&mut constraints, equality_constraint(s_0, s_1, &pair.2, field));
         } else if HashSet::contains(forbidden, &s_0) {
-            LinkedList::push_back(
-                &mut substitutions,
-                S::new(s_1, A::Signal { symbol: s_0 }).unwrap(),
-            );
+            substitutions.push((s_1, s_0));
         } else if HashSet::contains(forbidden, &s_1) {
-            LinkedList::push_back(
-                &mut substitutions,
-                S::new(s_0, A::Signal { symbol: s_1 }).unwrap(),
-            );
+            substitutions.push((s_0, s_1));
         } else {
             let (l, r) = if s_0 > s_1 { (s_0, s_1) } else { (s_1, s_0) };
-            LinkedList::push_back(&mut substitutions, S::new(l, A::Signal { symbol: r }).unwrap());
+            substitutions.push((l, r));
         }
         (substitutions, constraints)
     } else {
         let mut cons = LinkedList::new();
-        let mut subs = LinkedList::new();
+        let mut subs = Vec::new();
         let (mut remains, mut min_remains) = (BTreeSet::new(), None);
         let (mut remove, mut min_remove) = (HashSet::new(), None);
-        for c in cluster.constraints {
-            for signal in C::take_cloned_signals_ordered(&c) {
+        // The multi-signal cluster path canonicalizes kept constraints via A::sub (identical
+        // to the pre-optimization compiler for clusters of size > 1), so the retained
+        // coefficient (pair.2) is intentionally ignored here.
+        for (a, b, _c) in &cluster.pairs {
+            for &signal in &[*a, *b] {
                 if HashSet::contains(&forbidden, &signal) {
                     BTreeSet::insert(&mut remains, signal);
                     min_remains = Some(min_remains.map_or(signal, |s| std::cmp::min(s, signal)));
@@ -187,8 +290,7 @@ fn eq_cluster_simplification(
         }
 
         for signal in remove {
-            let sub = S::new(signal, A::Signal { symbol: rh_signal }).unwrap();
-            LinkedList::push_back(&mut subs, sub);
+            subs.push((signal, rh_signal));
         }
 
         (subs, cons)
@@ -196,18 +298,18 @@ fn eq_cluster_simplification(
 }
 
 fn eq_simplification(
-    equalities: LinkedList<C>,
+    equalities: Vec<crate::EqPair>,
     forbidden: Arc<HashSet<usize>>,
     no_vars: usize,
     field: &BigInt,
     substitution_log: &mut Option<SubstitutionJSON>,
-) -> (LinkedList<S>, LinkedList<C>) {
+) -> (Vec<SubPair>, LinkedList<C>) {
     use std::sync::mpsc;
     use threadpool::ThreadPool;
     let field = Arc::new(field.clone());
     let mut constraints = LinkedList::new();
-    let mut substitutions = LinkedList::new();
-    let clusters = build_clusters(equalities, no_vars);
+    let mut substitutions: Vec<SubPair> = Vec::new();
+    let clusters = build_eq_clusters(equalities, no_vars);
     let (cluster_tx, simplified_rx) = mpsc::channel();
     let pool = ThreadPool::new(num_cpus::get());
     let no_clusters = Vec::len(&clusters);
@@ -216,10 +318,10 @@ fn eq_simplification(
     let mut id = 0;
     let mut aux_constraints = vec![LinkedList::new(); clusters.len()];
     for cluster in clusters {
-        if Cluster::size(&cluster) == 1 {
+        if EqCluster::size(&cluster) == 1 {
             let (mut subs, cons) = eq_cluster_simplification(cluster, &forbidden, &field);
             aux_constraints[id] = cons;
-            LinkedList::append(&mut substitutions, &mut subs);
+            substitutions.append(&mut subs);
             single_clusters += 1;
         } else {
             let cluster_tx = cluster_tx.clone();
@@ -241,12 +343,19 @@ fn eq_simplification(
     for _ in 0..(no_clusters - single_clusters) {
         let (id, (mut subs, cons)) = simplified_rx.recv().unwrap();
         aux_constraints[id] = cons;
-        LinkedList::append(&mut substitutions, &mut subs);
+        substitutions.append(&mut subs);
     }
     for id in 0..no_clusters {
         LinkedList::append(&mut constraints, &mut aux_constraints[id]);
     }
-    log_substitutions(&substitutions, substitution_log);
+    if substitution_log.is_some() {
+        // Reconstruct full substitutions only for the JSON log (opt-in, rarely used).
+        let as_subs: LinkedList<S> = substitutions
+            .iter()
+            .map(|(from, to)| S::new(*from, A::Signal { symbol: *to }).unwrap())
+            .collect();
+        log_substitutions(&as_subs, substitution_log);
+    }
     (substitutions, constraints)
 }
 
@@ -428,21 +537,13 @@ fn build_relevant_set(
     }
 }
 
-fn remove_not_relevant(substitutions: &mut SEncoded, relevant: &HashSet<usize>) {
-    let signals: Vec<_> = substitutions.keys().cloned().collect();
-    for signal in signals {
-        if !HashSet::contains(&relevant, &signal) {
-            SEncoded::remove(substitutions, &signal);
-        }
-    }
-}
-
 
 // returns the constraints, the assignment of the witness and the number of inputs in the witness
 pub fn simplification(smp: &mut Simplifier) -> (ConstraintStorage, SignalMap, usize) {
     use super::non_linear_utils::obtain_and_simplify_non_linear;
     use circom_algebra::simplification_utils::build_encoded_fast_substitutions;
     use circom_algebra::simplification_utils::fast_encoded_constraint_substitution;
+    use circom_algebra::simplification_utils::fast_signal_constraint_substitution;
     use std::time::SystemTime;
 
     let mut substitution_log =
@@ -456,7 +557,7 @@ pub fn simplification(smp: &mut Simplifier) -> (ConstraintStorage, SignalMap, us
     let field = smp.field.clone();
     let forbidden = Arc::new(std::mem::replace(&mut smp.forbidden, HashSet::with_capacity(0)));
     let no_labels = Simplifier::no_labels(smp);
-    let equalities = std::mem::replace(&mut smp.equalities, LinkedList::new());
+    let equalities = std::mem::replace(&mut smp.equalities, Vec::new());
     let max_signal = smp.max_signal;
     let mut cons_equalities = std::mem::replace(&mut smp.cons_equalities, LinkedList::new());
     let mut linear = std::mem::replace(&mut smp.linear, LinkedList::new());
@@ -464,6 +565,7 @@ pub fn simplification(smp: &mut Simplifier) -> (ConstraintStorage, SignalMap, us
     let mut lconst = LinkedList::new();
     let mut no_rounds = smp.no_rounds;
     let remove_unused = true;
+
 
     let relevant_signals = {
         // println!("Creating first relevant set");
@@ -490,21 +592,34 @@ pub fn simplification(smp: &mut Simplifier) -> (ConstraintStorage, SignalMap, us
         );
 
         LinkedList::append(&mut lconst, &mut cons);
-        let mut substitutions = build_encoded_fast_substitutions(subs);
+        // The equality substitutions are all signal->signal. Build a compact
+        // signal->signal map (usize values, ~10x smaller than HashMap<usize, A>)
+        // for applying to linear/cons_equalities, and record every `from` in `deleted`.
+        let mut signal_sub: HashMap<usize, usize> = HashMap::with_capacity(subs.len());
+        for (from, to) in &subs {
+            signal_sub.insert(*from, *to);
+            deleted.insert(*from);
+        }
         for constraint in &mut linear {
-            if fast_encoded_constraint_substitution(constraint, &substitutions, &field){
+            if fast_signal_constraint_substitution(constraint, &signal_sub, &field){
                 C::fix_constraint(constraint, &field);
             }
         }
         for constraint in &mut cons_equalities {
-            if fast_encoded_constraint_substitution(constraint, &substitutions, &field){
+            if fast_signal_constraint_substitution(constraint, &signal_sub, &field){
                 C::fix_constraint(constraint, &field);
             }
         }
-        for signal in substitutions.keys().cloned() {
-            deleted.insert(signal);
+        drop(signal_sub);
+        // Build the encoded A-map only for substitutions whose `from` is relevant
+        // (referenced by a non-linear constraint). Almost all are discarded, so this
+        // avoids materializing ~83M heavy ArithmeticExpression values.
+        let mut substitutions: SEncoded = HashMap::new();
+        for (from, to) in subs {
+            if relevant_signals.contains(&from) {
+                substitutions.insert(from, A::Signal { symbol: to });
+            }
         }
-        remove_not_relevant(&mut substitutions, &relevant_signals);
         let _dur = now.elapsed().unwrap().as_millis();
         // println!("End of single assignment simplification: {} ms", dur);
         substitutions

@@ -1,11 +1,11 @@
 use super::{Constraint, Edge, Node, SimplificationFlags, Tree, DAG};
-use constraint_list::{ConstraintList, DAGEncoding, EncodingEdge, EncodingNode, SignalInfo, Simplifier};
+use constraint_list::{ConstraintList, DAGEncoding, EncodingEdge, EncodingNode, SignalInfo, Simplifier, EqPair};
 use program_structure::utils::constants::UsefulConstants;
 use std::collections::{HashSet, LinkedList};
 #[derive(Default)]
 struct CHolder {
     linear: LinkedList<Constraint>,
-    equalities: LinkedList<Constraint>,
+    equalities: Vec<EqPair>,
     constant_equalities: LinkedList<Constraint>,
 }
 
@@ -28,7 +28,12 @@ fn map_tree(
         if Constraint::is_constant_equality(constraint) {
             LinkedList::push_back(&mut c_holder.constant_equalities, constraint.clone());
         } else if Constraint::is_equality(constraint, &tree.field) {
-            LinkedList::push_back(&mut c_holder.equalities, constraint.clone());
+            let signals = Constraint::take_cloned_signals_ordered(constraint);
+            let mut it = signals.into_iter();
+            let s0 = it.next().unwrap();
+            let s1 = it.next().unwrap();
+            let c0 = constraint.c().get(&s0).cloned().unwrap();
+            c_holder.equalities.push((s0, s1, c0));
         } else if Constraint::is_linear(constraint) {
             LinkedList::push_back(&mut c_holder.linear, constraint.clone());
         } else {

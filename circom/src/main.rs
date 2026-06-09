@@ -4,6 +4,9 @@ mod input_user;
 mod parser_user;
 mod type_analysis_user;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 

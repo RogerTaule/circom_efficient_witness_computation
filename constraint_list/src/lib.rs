@@ -16,6 +16,7 @@ mod non_linear_simplification;
 type C = circom_algebra::algebra::Constraint<usize>;
 type S = circom_algebra::algebra::Substitution<usize>;
 type A = circom_algebra::algebra::ArithmeticExpression<usize>;
+pub type EqPair = (usize, usize, circom_algebra::num_bigint::BigInt);
 type SignalMap = HashMap<usize, usize>;
 type SEncoded = HashMap<usize, A>;
 type SFrames = LinkedList<SEncoded>;
@@ -115,7 +116,7 @@ pub struct Simplifier {
     pub no_private_inputs: usize,
     pub forbidden: HashSet<usize>,
     pub cons_equalities: LinkedList<C>,
-    pub equalities: LinkedList<C>,
+    pub equalities: Vec<EqPair>,
     pub linear: LinkedList<C>,
     //  Signals in [witness_len, Vec::len(&signal_map)) are the ones deleted
     pub max_signal: usize,
