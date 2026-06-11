@@ -394,6 +394,11 @@ int main (int argc, char *argv[]) {
    //auto t_mid = std::chrono::high_resolution_clock::now();
    //std::cout << std::chrono::duration<double, std::milli>(t_mid-t_start).count()<<std::endl;
 
+   if (ctx->errorOccurred) {
+     std::cerr << "Witness generation failed: an assert did not hold" << std::endl;
+     return 1;
+   }
+
    writeBinWitness(ctx,wtnsfile);
   
    //auto t_end = std::chrono::high_resolution_clock::now();

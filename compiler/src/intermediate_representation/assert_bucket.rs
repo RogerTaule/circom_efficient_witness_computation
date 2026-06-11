@@ -73,13 +73,18 @@ impl WriteC for AssertBucket {
         if !self.is_constraint_equality || producer.sanity_check_style >= 1{
             let (mut prologue, value) = self.evaluate.produce_c(producer, parallel);
             let is_true = build_call("Fr_isTrue".to_string(), vec![value]);
-            let if_condition = format!("if (!{}) {{\n {}; \n throw std::runtime_error(\"Witness generation failed \"); }}", is_true, build_failed_assert_message(self.line));    
-            // let assertion = format!("{};", build_call("assert".to_string(), vec![is_true]));
+            let bail = if parallel.unwrap_or(false) { "" } else { "\n return;" };
+            let if_condition = format!(
+                "if (!{}) {{\n if (!{}->errorOccurred.exchange(true)) {{ {}; }}{} }}",
+                is_true,
+                CIRCOM_CALC_WIT,
+                build_failed_assert_message(self.line),
+                bail
+            );
             let mut assert_c = vec![];
             assert_c.push(format!("{{"));
             assert_c.append(&mut prologue);
             assert_c.push(if_condition);
-            // assert_c.push(assertion);
             assert_c.push(format!("}}"));
             (assert_c, "".to_string())
         } else{
