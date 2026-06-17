@@ -39,8 +39,13 @@ pub const L_INTERMEDIATE_COMPUTATIONS_STACK: &str = "expaux"; // type PFrElement
 pub fn declare_expaux(size: usize) -> CInstruction {
     format!("{} {}[{}]", T_FR_ELEMENT, L_INTERMEDIATE_COMPUTATIONS_STACK, size)
 }
+pub const STACK_SCRATCH_THRESHOLD: usize = 1024;
 pub fn declare_64bit_expaux(size: usize) -> CInstruction {
-    format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, T_U64, size)
+    if size <= STACK_SCRATCH_THRESHOLD {
+        format!("{} {}[{}]", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, size.max(1))
+    } else {
+        format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_INTERMEDIATE_COMPUTATIONS_STACK, T_U64, size)
+    }
 }
 pub fn expaux(at: CInstruction) -> CInstruction {
     format!("{}[{}]", L_INTERMEDIATE_COMPUTATIONS_STACK, at)
@@ -62,7 +67,11 @@ pub fn declare_lvar(size: usize) -> CInstruction {
     format!("{} {}[{}]", T_FR_ELEMENT, L_VAR_STORAGE, size)
 }
 pub fn declare_64bit_lvar(size: usize) -> CInstruction {
-    format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_VAR_STORAGE, T_U64, size)
+    if size <= STACK_SCRATCH_THRESHOLD {
+        format!("{} {}[{}]", T_U64, L_VAR_STORAGE, size.max(1))
+    } else {
+        format!("std::unique_ptr<{}[]> {} = std::make_unique<{}[]>({})", T_U64, L_VAR_STORAGE, T_U64, size)
+    }
 }
 pub fn declare_lvar_pointer() -> CInstruction {
     format!("{}* {}", T_FR_ELEMENT, L_VAR_STORAGE)
@@ -184,7 +193,7 @@ pub fn my_signal_start() -> CInstruction {
 pub const MY_TEMPLATE_NAME: &str = "myTemplateName";
 pub fn declare_my_template_name() -> CInstruction {
     format!(
-        "std::string {} = {}->componentMemory[{}].templateName",
+        "const std::string& {} = {}->componentMemory[{}].templateName",
         MY_TEMPLATE_NAME, CIRCOM_CALC_WIT, CTX_INDEX
     )
 }
@@ -202,7 +211,7 @@ pub fn my_template_name() -> CInstruction {
 pub const MY_COMPONENT_NAME: &str = "myComponentName";
 pub fn declare_my_component_name() -> CInstruction {
     format!(
-        "std::string {} = {}->componentMemory[{}].componentName",
+        "const std::string& {} = {}->componentMemory[{}].componentName",
         MY_COMPONENT_NAME, CIRCOM_CALC_WIT, CTX_INDEX
     )
 }
