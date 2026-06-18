@@ -144,7 +144,7 @@ pub fn component_offset() -> CInstruction {
 
 pub const COMPONENT_NAME: &str = "componentName";
 pub fn declare_component_name() -> CInstruction {
-    format!("std::string {}", COMPONENT_NAME)
+    format!("const std::string& {}", COMPONENT_NAME)
 }
 pub fn component_name() -> CInstruction {
     COMPONENT_NAME.to_string()
@@ -211,7 +211,7 @@ pub fn my_template_name() -> CInstruction {
 pub const MY_COMPONENT_NAME: &str = "myComponentName";
 pub fn declare_my_component_name() -> CInstruction {
     format!(
-        "const std::string& {} = {}->componentMemory[{}].componentName",
+        "#ifdef WITNESS_DEBUG\n  const std::string& {0} = {1}->componentMemory[{2}].componentName;\n#else\n  static const std::string {0}; (void){0};\n#endif",
         MY_COMPONENT_NAME, CIRCOM_CALC_WIT, CTX_INDEX
     )
 }
@@ -611,13 +611,15 @@ pub fn generate_dat_from_hash_map(map: &Vec<(u64, u64, u64)>) -> Vec<u8> {
     hash_map_data
 }
 
-pub fn generate_dat_witness_to_signal_list(signal_list: &Vec<usize>) -> Vec<u8> {
+pub fn generate_dat_witness_to_signal_list(signal_list: &Vec<usize>, total_number_of_signals: usize) -> Vec<u8> {
+    let use_u32 = total_number_of_signals <= (u32::MAX as usize);
     let mut signal_list_data = vec![];
     for s in signal_list {
-        let s64 = *s as u64;
-        let mut v: Vec<u8> = s64.to_be_bytes().to_vec();
-        v.reverse();
-        signal_list_data.append(&mut v);
+        if use_u32 {
+            signal_list_data.extend_from_slice(&(*s as u32).to_le_bytes());
+        } else {
+            signal_list_data.extend_from_slice(&(*s as u64).to_le_bytes());
+        }
     }
     signal_list_data
 }
@@ -838,7 +840,7 @@ pub fn generate_dat_file(dat_file: &mut dyn Write, producer: &CProducer) -> std:
                                                     //dfile.write_all(&hml.to_be_bytes())?;
     dat_file.write_all(&hashmap)?;
     //dat_file.flush()?;
-    let s = generate_dat_witness_to_signal_list(producer.get_witness_to_signal_list()); // list of bytes u64
+    let s = generate_dat_witness_to_signal_list(producer.get_witness_to_signal_list(), producer.get_total_number_of_signals());
                                                                                         //let sl = s.len() as u64; //8 bytes
                                                                                         //dfile.write_all(&sl.to_be_bytes())?;
     dat_file.write_all(&s)?;

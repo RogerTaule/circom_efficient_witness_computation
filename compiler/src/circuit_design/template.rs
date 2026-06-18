@@ -208,12 +208,14 @@ impl TemplateCodeInfo {
 	        component_offset(),
             &self.number_of_inputs.to_string()
         ));
+        create_body.push("#ifdef WITNESS_DEBUG".to_string());
         create_body.push(format!(
             "{}->componentMemory[{}].componentName = {};",
             CIRCOM_CALC_WIT,
 	        component_offset(),
             COMPONENT_NAME
         ));
+        create_body.push("#endif".to_string());
         create_body.push(format!(
             "{}->componentMemory[{}].idFather = {};",
             CIRCOM_CALC_WIT,
@@ -223,13 +225,6 @@ impl TemplateCodeInfo {
         if self.number_of_components > 0{
             create_body.push(format!(
                 "{}->componentMemory[{}].subcomponents = new uint[{}]{{0}};",
-                CIRCOM_CALC_WIT,
-                component_offset(),
-                &self.number_of_components.to_string()
-            ));
-        } else{
-            create_body.push(format!(
-                "{}->componentMemory[{}].subcomponents = new uint[{}];",
                 CIRCOM_CALC_WIT,
                 component_offset(),
                 &self.number_of_components.to_string()
@@ -296,7 +291,7 @@ impl TemplateCodeInfo {
         }
         run_body.push(format!("{};", declare_my_signal_start()));
         run_body.push(format!("{};", declare_my_template_name()));
-        run_body.push(format!("{};", declare_my_component_name()));
+        run_body.push(declare_my_component_name());
         run_body.push(format!("{};", declare_my_father()));
         run_body.push(format!("{};", declare_my_id()));
         run_body.push(format!("{};", declare_my_subcomponents()));

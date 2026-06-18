@@ -275,6 +275,7 @@ impl WriteC for CreateCmpBucket {
             }
         }
 
+        instructions.push("#ifdef WITNESS_DEBUG".to_string());
         if self.number_of_cmp > 1{
             instructions.push(
                 format!("std::string new_cmp_name = \"{}\"+{};",
@@ -286,6 +287,9 @@ impl WriteC for CreateCmpBucket {
         else {
             instructions.push(format!("std::string new_cmp_name = \"{}\";", self.name_subcomponent.to_string()));
         }
+        instructions.push("#else".to_string());
+        instructions.push("static const std::string new_cmp_name;".to_string());
+        instructions.push("#endif".to_string());
 
         let create_args = vec![
             csoffset, 
