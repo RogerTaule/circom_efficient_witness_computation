@@ -353,23 +353,41 @@ impl TemplateCodeInfo {
             let mut arguments = Vec::new();
 
             // add the parameters of the instance
+            //
+            // Under goldilocks the parameters are passed BY VALUE, as plain u64 literals. That
+            // matches what collect_template_headers declares for an extern_c gate -- "uint64_t
+            // name" for a scalar, "uint64_t name[]" for an array -- and it is the only form that
+            // compiles: the FrElement path indexes circuitConstants, but that pointer is declared
+            // only for non-goldilocks primes (see the run_body prelude above), so taking it here
+            // emitted a call referencing an undeclared symbol. A parameterized extern_c custom gate
+            // therefore did not build at all under --prime goldilocks.
+            let goldilocks = producer.prime_str == "goldilocks";
             for arg in &self.arguments{
                 if arg.lengths.len() == 0{
                     // case single value
-                    let constant = arg.values[0].to_str_radix(10);
-                    let index = self.map_constants_arguments.get(&constant).unwrap();
-                    arguments.push(format!("&{}", circuit_constants(index.to_string())));
+                    if goldilocks{
+                        arguments.push(arg.values[0].to_str_radix(10));
+                    } else{
+                        let constant = arg.values[0].to_str_radix(10);
+                        let index = self.map_constants_arguments.get(&constant).unwrap();
+                        arguments.push(format!("&{}", circuit_constants(index.to_string())));
+                    }
                 } else{
                     // case array
                     // build the array of indexes
                     let mut arg_values = Vec::new();
                     for v in &arg.values{
-                        let constant = v.to_str_radix(10);
-                        let index = self.map_constants_arguments.get(&constant).unwrap();
-                        arg_values.push(format!("&{}", circuit_constants(index.to_string())));
+                        if goldilocks{
+                            arg_values.push(v.to_str_radix(10));
+                        } else{
+                            let constant = v.to_str_radix(10);
+                            let index = self.map_constants_arguments.get(&constant).unwrap();
+                            arg_values.push(format!("&{}", circuit_constants(index.to_string())));
+                        }
                     }
-                    run_body.push(format!("FrElement* arg_{}{:?} = {};",
-                        arg.name, arg.lengths, set_list_str(arg_values)
+                    let ty = if goldilocks {"uint64_t"} else {"FrElement*"};
+                    run_body.push(format!("{} arg_{}{:?} = {};",
+                        ty, arg.name, arg.lengths, set_list_str(arg_values)
                     ));
                     arguments.push(format!("arg_{}", arg.name));
 
